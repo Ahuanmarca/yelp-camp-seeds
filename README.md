@@ -14,8 +14,13 @@ MONGO_DB_NAME=""
 UNSPLASH_API_KEY=""
 ```
 
-To run, simply do:
+To seed local database:
 
 ```
-node index.js
+node seed.js local
+```
+
+To seed cloud database:
+```
+node seed.js remote
 ```
