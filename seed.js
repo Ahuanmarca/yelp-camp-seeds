@@ -86,7 +86,7 @@ async function seedCampgrounds(photos, users) {
       image: photos[i].urls.regular,
       description:
         'Lorem ipsum dolor sit amet consectetur adipisicing elit. Quibusdam dolores vero perferendis laudantium, consequuntur voluptatibus nulla architecto, sit soluta esse iure sed labore ipsam a cum nihil atque molestiae deserunt!',
-      price: 'USD 100.00',
+      price: 100.00,
       author: users[randomUser]._id,
     });
     await camp.save();
