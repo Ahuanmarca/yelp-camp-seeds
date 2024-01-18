@@ -2,8 +2,8 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import cities from './helpers/cities.js';
 import { descriptors, places } from './helpers/seedHelpers.js';
-import Campground from './models/campgrounds.js';
-import User from './models/user.js';
+import Campground from './models/Campground.js';
+import User from './models/User.js';
 import { createApi } from 'unsplash-js';
 import express from 'express';
 import session from 'express-session';
@@ -14,8 +14,13 @@ main().catch((err) => console.log(err));
 
 async function main() {
   dotenv.config();
-  const { MONGO_URL, MONGO_DB_NAME, UNSPLASH_API_KEY, LOCAL_DB_URL, SESSION_CONFIG_SECRET } =
-    process.env;
+  const {
+    MONGO_URL,
+    MONGO_DB_NAME,
+    UNSPLASH_API_KEY,
+    LOCAL_DB_URL,
+    SESSION_CONFIG_SECRET,
+  } = process.env;
   const args = process.argv;
 
   // I need the app to use 'passport'
@@ -45,12 +50,11 @@ async function main() {
   // First must create users
   await seedUsers();
 
-  // Get photos from unsplash
+  // Get photos from Unsplash
   const photos = await getPhotos(UNSPLASH_API_KEY);
 
   // Get user id's from database (just created them) to use as foreign keys in the campgrounds
   const users = await User.find({}, { _id: 1 });
-  // console.log(users);
 
   // When creating campgrounds, we need the photos array to fill the campgrounds images,
   // and we need the users _id's to use as foreing keys in the campgrounds
@@ -83,12 +87,12 @@ async function seedCampgrounds(photos, users) {
     const camp = new Campground({
       location: `${cities[random1000].city}, ${cities[random1000].state}`,
       title: `${sample(descriptors)} ${sample(places)}`,
-      image: photos[i].urls.regular,
       description:
         'Lorem ipsum dolor sit amet consectetur adipisicing elit. Quibusdam dolores vero perferendis laudantium, consequuntur voluptatibus nulla architecto, sit soluta esse iure sed labore ipsam a cum nihil atque molestiae deserunt!',
-      price: 100.00,
+      price: 100.0,
       author: users[randomUser]._id,
     });
+    camp.images = [{ url: photos[i].urls.regular, filename: photos[i].slug }];
     await camp.save();
   }
 }
@@ -122,15 +126,13 @@ async function seedUsers() {
     const { email, username, password } = userInfo;
     if (username) {
       const user = new User({ email, username });
-      const newUser = await User.register(user, password);
-      // console.log(newUser);
+      await User.register(user, password);
     }
   }
 }
 
 async function dbConnection(args, MONGO_URL, MONGO_DB_NAME, LOCAL_DB_URL) {
-  // Check usage for 'local' or 'remote' argument
-  if (args.length < 3 || (args[2] !== 'local' && args[2] !== 'remote')) {
+  if (args.length !== 3 || (args[2] !== 'local' && args[2] !== 'remote')) {
     console.log(`Usage:
       For local database connection run
         node seed.js local
