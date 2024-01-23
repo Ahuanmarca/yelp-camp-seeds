@@ -86,13 +86,27 @@ async function seedCampgrounds(photos, users) {
     const randomUser = Math.floor(Math.random() * 4);
     const camp = new Campground({
       location: `${cities[random1000].city}, ${cities[random1000].state}`,
+      geometry: {
+        type: 'Point',
+        coordinates: [
+          cities[random1000].longitude,
+          cities[random1000].latitude,
+        ],
+      },
       title: `${sample(descriptors)} ${sample(places)}`,
       description:
         'Lorem ipsum dolor sit amet consectetur adipisicing elit. Quibusdam dolores vero perferendis laudantium, consequuntur voluptatibus nulla architecto, sit soluta esse iure sed labore ipsam a cum nihil atque molestiae deserunt!',
       price: 100.0,
       author: users[randomUser]._id,
     });
-    camp.images = [{ url: photos[i].urls.regular, filename: photos[i].slug }];
+    camp.images = [
+      {
+        origin: 'unsplash',
+        url: photos[i].urls.regular,
+        filename: photos[i].slug,
+        unsplashThumbnail: photos[i].urls.thumb,
+      },
+    ];
     await camp.save();
   }
 }
