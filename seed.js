@@ -9,25 +9,69 @@ import express from 'express';
 import session from 'express-session';
 import passport from 'passport';
 import LocalStrategy from 'passport-local';
+import fallbackConfig from './helpers/fallbackConfig.js';
 
 main().catch((err) => console.log(err));
 
 async function main() {
   dotenv.config();
-  const {
-    MONGO_URL,
-    MONGO_DB_NAME,
-    UNSPLASH_API_KEY,
-    LOCAL_DB_URL,
-    SESSION_CONFIG_SECRET,
-  } = process.env;
+  const config = Object.assign(
+    {},
+    {
+      MONGO_URL:                    process.env.MONGO_URL             || fallbackConfig.MONGO_URL,
+      MONGO_DB_NAME:                process.env.MONGO_DB_NAME         || fallbackConfig.MONGO_DB_NAME,
+      UNSPLASH_API_KEY:             process.env.UNSPLASH_API_KEY      || fallbackConfig.UNSPLASH_API_KEY,
+      LOCAL_DB_URL:                 process.env.LOCAL_DB_URL          || fallbackConfig.LOCAL_DB_URL,
+      SESSION_CONFIG_SECRET:        process.env.SESSION_CONFIG_SECRET || fallbackConfig.SESSION_CONFIG_SECRET,
+    }
+  );
+  if (Object.values(config).some((n) => n === undefined || n === "")) {
+    console.log({
+      Error:
+        'Environmental variables are missing. Please provide them on a .env file or in the /helpers/fallbackConfig.js file',
+    });
+    // Missing environmental variables cause early return
+    return;
+  }
+
   const args = process.argv;
+  config.CONNECTION = args[2];
+  config.CAMPGROUNDS_NUMBER = args[3] || 50;
+
+  const conditions =
+    args.length >= 3 &&
+    args.length <= 4 &&
+    (args[2] === 'local' || args[2] === 'remote') &&
+    (args[3] === undefined ||
+      (typeof Number(args[3]) === 'number' && Number(args[3]) <= 200));
+
+  if (!conditions) {
+    console.log(`
+    For local database run:
+
+      node seed.js local
+
+    For remote database run:
+
+      node seed.js remote
+    
+    To specify the number of campgrounds, pass a second argument.
+    Default is 50, maximum is 200 (should be an int).
+
+      node seed.js local 100
+
+    `);
+    // Invalid arguments causes early return
+    return;
+  }
+
+  console.log({ config });
 
   // I need the app to use 'passport'
   const app = express();
 
   const sessionConfig = {
-    secret: SESSION_CONFIG_SECRET,
+    secret: config.SESSION_CONFIG_SECRET,
     resave: false,
     saveUninitialized: true,
     cookie: {
@@ -44,47 +88,78 @@ async function main() {
   passport.serializeUser(User.serializeUser());
   passport.deserializeUser(User.deserializeUser());
 
-  // Connect to database
-  await dbConnection(args, MONGO_URL, MONGO_DB_NAME, LOCAL_DB_URL);
+  /**
+   * Seeding steps:
+   * - Connect to database (local or remote)
+   * - Seed Users
+   * - Get photos from Unsplash
+   * - Seed Campgrounds (need photos and users)
+   * - Close connection and console.log results!
+   */
 
-  // First must create users
-  await seedUsers();
+  await dbConnection(config);
+  const users = await seedUsers(['alice', 'bob', 'charlie']);
+  const photos = await getPhotos(config);
+  const campgrounds = await seedCampgrounds(photos, users);
 
-  // Get photos from Unsplash
-  const photos = await getPhotos(UNSPLASH_API_KEY);
-
-  // Get user id's from database (just created them) to use as foreign keys in the campgrounds
-  const users = await User.find({}, { _id: 1 });
-
-  // When creating campgrounds, we need the photos array to fill the campgrounds images,
-  // and we need the users _id's to use as foreing keys in the campgrounds
-  await seedCampgrounds(photos, users);
-
-  // Close mongoose connection
   mongoose.connection.close();
+  console.log({
+    seeded: { users: users.length, campgrounds: campgrounds.length },
+  });
   console.log('Closed database connection');
 }
 
 const sample = (array) => array[Math.floor(Math.random() * array.length)];
 
-async function getPhotos(UNSPLASH_API_KEY) {
-  const unsplashAPI = createApi({ accessKey: UNSPLASH_API_KEY });
-  const response = await unsplashAPI.search.getPhotos({
-    query: 'campgrounds',
-    orientation: 'landscape',
-    perPage: 30,
-    page: 1,
-  });
-  const photos = response.response.results;
-  return photos;
+async function getPhotos(
+  config,
+  query = 'campgrounds',
+  orientation = 'landscape',
+  perPage = 30
+) {
+  const unsplashAPI = createApi({ accessKey: config.UNSPLASH_API_KEY });
+  const pages = Math.floor(config.CAMPGROUNDS_NUMBER / perPage);
+  const lastPage = config.CAMPGROUNDS_NUMBER % perPage;
+  const promises = [];
+
+  // Request 30 photos per page
+  if (pages >= 1) {
+    for (let i = 0; i < pages; i++) {
+      promises.push(
+        unsplashAPI.search.getPhotos({
+          query: query,
+          orientation: orientation,
+          perPage: perPage, // 30 === Unsplah API limit?
+          page: i + 1,
+        })
+      );
+    }
+  }
+
+  // Request photos from lastPage
+  if (lastPage >= 1) {
+    promises.push(
+      unsplashAPI.search.getPhotos({
+        query: query,
+        orientation: orientation,
+        perPage: lastPage,
+        page: 1,
+      })
+    );
+  }
+
+  const response = await Promise.all(promises);
+  const photos = response.map((r) => r.response.results); // This nesting is confusing
+  return photos.flat(); // 'photos' is an array of arrays
 }
 
+// Creates as many campgrounds as we have photos from unsplash
 async function seedCampgrounds(photos, users) {
-  await Campground.deleteMany();
-  for (let i = 0; i < 30; i++) {
+  console.log({ deletedCampgrounds: await Campground.deleteMany() });
+  const campgroundsArray = photos.map((photo) => {
     const random1000 = Math.floor(Math.random() * 1000);
-    const randomUser = Math.floor(Math.random() * 4);
-    const camp = new Campground({
+    const randomUser = Math.floor(Math.random() * users.length);
+    const campground = {
       location: `${cities[random1000].city}, ${cities[random1000].state}`,
       geometry: {
         type: 'Point',
@@ -96,74 +171,51 @@ async function seedCampgrounds(photos, users) {
       title: `${sample(descriptors)} ${sample(places)}`,
       description:
         'Lorem ipsum dolor sit amet consectetur adipisicing elit. Quibusdam dolores vero perferendis laudantium, consequuntur voluptatibus nulla architecto, sit soluta esse iure sed labore ipsam a cum nihil atque molestiae deserunt!',
-      price: 100.0,
+      price: Math.round((Math.random() * 100 + 20) * 100) / 100,
       author: users[randomUser]._id,
-    });
-    camp.images = [
-      {
-        origin: 'unsplash',
-        url: photos[i].urls.regular,
-        filename: photos[i].slug,
-        unsplashThumbnail: photos[i].urls.thumb,
-      },
-    ];
-    await camp.save();
-  }
+      images: [
+        {
+          origin: 'unsplash',
+          url: photo.urls.regular,
+          filename: photo.slug,
+          unsplashThumbnail: photo.urls.thumb,
+        },
+      ],
+    };
+    return campground;
+  });
+  return await Campground.insertMany(campgroundsArray);
 }
 
-async function seedUsers() {
-  await User.deleteMany();
-  const usersArr = [
-    {
-      email: 'jane@jane.ja',
-      username: 'jane',
-      password: 'jane',
-    },
-    {
-      email: 'alice@alice.al',
-      username: 'alice',
-      password: 'alice',
-    },
-    {
-      email: 'bob@bob.bo',
-      username: 'bob',
-      password: 'bob',
-    },
-    {
-      email: 'charlie@charlie.ch',
-      username: 'charlie',
-      password: 'charlie',
-    },
-  ];
-
-  for (const userInfo of usersArr) {
-    const { email, username, password } = userInfo;
-    if (username) {
+async function seedUsers(names = ['alice', 'bob', 'charlie']) {
+  console.log({ deletedUsers: await User.deleteMany() });
+  return await Promise.all(
+    names.map(async (name) => {
+      const email = `${name}@${name}.${name.slice(0, 2)}`;
+      const username = name;
+      const password = name;
       const user = new User({ email, username });
-      await User.register(user, password);
-    }
-  }
+      return User.register(user, password);
+    })
+  );
 }
 
-async function dbConnection(args, MONGO_URL, MONGO_DB_NAME, LOCAL_DB_URL) {
-  if (args.length !== 3 || (args[2] !== 'local' && args[2] !== 'remote')) {
-    console.log(`Usage:
-      For local database connection run
-        node seed.js local
-      For remote database connection run
-        node seed.js remote
-    `);
-    return;
-  }
-
-  const dbOrigin = args[2];
+async function dbConnection(config) {
+  const dbOrigin = config.CONNECTION;
   console.log(`Connecting to ${dbOrigin} database`);
 
-  if (args[2] === 'remote') {
-    await mongoose.connect(MONGO_URL, { dbName: MONGO_DB_NAME });
-    console.log(`Mongoose connected to ${MONGO_DB_NAME} database.`);
-  } else {
-    await mongoose.connect(LOCAL_DB_URL);
-    console.log('Mongoose connected to local database.');
+  switch (dbOrigin) {
+    case 'remote':
+      await mongoose.connect(config.MONGO_URL, {
+        dbName: config.MONGO_DB_NAME,
+      });
+      console.log(`Mongoose connected to ${config.MONGO_DB_NAME} database.`);
+      break;
+    case 'local':
+      await mongoose.connect(config.LOCAL_DB_URL);
+      console.log('Mongoose connected to local database.');
+      break;
+    default:
+      console.log('Something went wrong with the connection!');
   }
 }
