@@ -183,7 +183,6 @@ async function seedCampgrounds(photos, users) {
         },
       ],
     };
-    console.debug(campground);
     return campground;
   });
   return await Campground.insertMany(campgroundsArray);
