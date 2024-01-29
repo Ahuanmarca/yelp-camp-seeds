@@ -173,6 +173,7 @@ async function seedCampgrounds(photos, users) {
         'Lorem ipsum dolor sit amet consectetur adipisicing elit. Quibusdam dolores vero perferendis laudantium, consequuntur voluptatibus nulla architecto, sit soluta esse iure sed labore ipsam a cum nihil atque molestiae deserunt!',
       price: Math.round((Math.random() * 100 + 20) * 100) / 100,
       author: users[randomUser]._id,
+      image: photo.urls.regular,
       images: [
         {
           origin: 'unsplash',
@@ -182,6 +183,7 @@ async function seedCampgrounds(photos, users) {
         },
       ],
     };
+    console.debug(campground);
     return campground;
   });
   return await Campground.insertMany(campgroundsArray);
